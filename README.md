@@ -1,98 +1,129 @@
-# Secure Distributed Log Aggregation System
+# Secure Log Aggregation System
 
-A simple distributed system that collects and processes logs from multiple machines in real time using UDP sockets and TLS-secured authentication.
+## Overview
+
+This project implements a **secure and scalable log aggregation system** where multiple clients send log data to a central server. The system combines **TLS (for secure key exchange)** with **UDP (for high-speed transmission)** and **lightweight encryption** to balance security and performance.
+
+---
 
 ## Features
 
-* UDP-based log streaming from multiple clients
-* TLS-secured control server for client authentication
-* Concurrent log processing using worker threads
-* Queue-based **backpressure handling**
-* **Time-ordered log processing**
-* System **throughput monitoring (logs/sec)**
+* Secure key exchange using TLS
+* Fast log transmission using UDP
+* Lightweight XOR-based encryption for logs
+* Multi-client support
+* Sequence tracking for detecting packet loss
+* Multithreaded log processing
+* Performance monitoring (throughput, dropped logs, active clients)
 
-## System Architecture
+---
 
-Client machines first authenticate with the **TLS control server**, then send logs to the **UDP log server**.
+## Architecture
 
-```
-Clients
-   |
-   | TLS Authentication
-   v
-TLS Control Server
-   |
-   | UDP Log Streaming
-   v
-UDP Log Server
-   |
-Queue (Backpressure)
-   |
-Worker Threads
-   |
-Log Processor
-   |
-Metrics (Throughput)
-```
+### Components
 
-## Technologies Used
+1. **Server (`server.py`)**
 
-* Python
-* UDP Socket Programming
-* TLS / SSL (Python `ssl` module)
-* Multithreading
-* Queue-based buffering
+   * Handles TLS connections for key exchange
+   * Receives encrypted logs over UDP
+   * Decrypts and processes logs
+   * Maintains metrics
 
-## Project Structure
+2. **Client (`client.py`)**
 
-```
-distributed_log_system
-│
-├── udp_server.py      # UDP log ingestion server
-├── tls_server.py      # TLS authentication server
-├── client.py          # log generating client
-├── processor.py       # log ordering and processing
-├── metrics.py         # throughput and drop statistics
-├── generate_cert.sh   # script to generate TLS certificates
-```
+   * Connects via TLS to obtain encryption key
+   * Generates logs continuously
+   * Encrypts logs using XOR
+   * Sends logs via UDP
 
-## Setup
+3. **Testing Scripts**
 
-### 1. Clone the repository
+   * `verify_encryption.sh` → checks if logs are encrypted
+   * `test_dtls.py` → tests encryption and throughput
 
-```
-git clone <repo-url>
-cd distributed_log_system
-```
+4. **Certificate Generator**
 
-### 2. Generate TLS certificates
+   * `generate_cert.sh` → generates TLS certificate and private key
 
-```
-bash generate_cert.sh
-```
+---
 
-### 3. Start servers
+## Workflow
 
-```
-python udp_server.py
-python tls_server.py
+1. Client connects to server using TLS
+2. Server assigns a symmetric XOR key
+3. Client encrypts logs using the key
+4. Logs are sent over UDP
+5. Server decrypts and processes logs
+6. Metrics are displayed periodically
+
+---
+
+## Security Model
+
+* TLS ensures secure key exchange using public/private key cryptography
+* XOR encryption secures log messages during UDP transmission
+* Hybrid model balances **security (TLS)** and **performance (UDP)**
+
+---
+
+## Setup Instructions
+
+### 1. Generate Certificates
+
+```bash
+chmod +x generate_cert.sh
+./generate_cert.sh
 ```
 
-### 4. Run clients
+### 2. Start Server
 
-```
-python client.py client1
-python client.py client2
+```bash
+python3 server.py
 ```
 
-## Example Output
+### 3. Run Client(s)
 
+```bash
+python3 client.py client1
+python3 client.py client2
 ```
-[12:03:11] client1 INFO CPU high
-[12:03:12] client2 WARN memory spike
 
----- METRICS ----
-logs: 540
-dropped: 2
-throughput: 108 logs/sec
+---
+
+## Testing
+
+### Encryption Verification
+
+```bash
+chmod +x verify_encryption.sh
+./verify_encryption.sh
 ```
+
+### Throughput Test
+
+```bash
+python3 test_dtls.py
+```
+
+---
+
+## Metrics Displayed
+
+* Total logs processed
+* Dropped logs
+* Throughput (logs/sec)
+* Number of active clients
+
+---
+
+## Limitations
+
+* XOR encryption is not secure for real-world applications
+* Uses self-signed certificates (no authentication)
+* UDP does not guarantee delivery
+
+---
+
+## Summary
+
+This project demonstrates how to design a **secure yet high-performance logging system** by combining secure key exchange with fast data transmission, making it a practical example of real-world distributed systems design.
