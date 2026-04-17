@@ -21,11 +21,11 @@ sudo tcpdump -i lo0 -c 5 -X udp port 9000 2>/dev/null | grep -E "(INFO|WARN|ERRO
 
 if [ -s /tmp/dtls_test.txt ]; then
     echo ""
-    echo "❌ FAIL: Plaintext log data detected in UDP packets!"
+    echo "FAIL: Plaintext log data detected in UDP packets!"
     cat /tmp/dtls_test.txt
 else
     echo ""
-    echo "✅ PASS: No plaintext log data found - DTLS encryption working!"
+    echo "PASS: No plaintext log data found - DTLS encryption working!"
 fi
 
 # Cleanup
