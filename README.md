@@ -19,53 +19,36 @@ This project implements a secure and scalable log aggregation system where multi
 - **Performance monitoring** (throughput, latency, packet loss, active clients)
 
 ---
-## Workflow
-Step 1: Client connects to server using TLS (Port 8000)
-│
-▼
-Step 2: Server assigns a unique XOR key (1-255) to the client
-│
-▼
-Step 3: Client collects REAL system logs from the operating system
-│
-▼
-Step 4: Client encrypts each log using XOR cipher
-│
-▼
-Step 5: Encrypted logs are sent over UDP (Port 9000)
-│
-▼
-Step 6: Server decrypts logs using client's key
-│
-▼
-Step 7: Server calculates latency and checks sequence numbers
-│
-▼
-Step 8: Logs are queued and processed by worker threads
-│
-▼
-Step 9: Metrics (throughput, latency, packet loss) are displayed every 10 seconds
 
 ## Setup Instructions
 
-### 1. Generate Certificates
+1. Generate Certificates
 
-```bash
 chmod +x generate_cert.sh
 ./generate_cert.sh
 
-# Or manually:
+Or manually:
 openssl req -new -x509 -days 365 -nodes -out server.crt -keyout server.key -subj "/CN=127.0.0.1"
+
 
 2. Start Server
 
-bash
 python3 server.py
+
+Expected output:
+
+==================================================
+REAL SYSTEM LOG AGGREGATOR
+WITH LATENCY & PACKET LOSS METRICS
+==================================================
+[TLS] Key exchange on port 8000
+[UDP] Listening on port 9000
+
+
 3. Run Client(s)
 
-bash
-# Terminal 2
+Terminal 2
 python3 client.py client1
 
-# Terminal 3
+Terminal 3
 python3 client.py client2
