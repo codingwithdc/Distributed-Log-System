@@ -35,16 +35,6 @@ openssl req -new -x509 -days 365 -nodes -out server.crt -keyout server.key -subj
 
 python3 server.py
 
-Expected output:
-
-==================================================
-REAL SYSTEM LOG AGGREGATOR
-WITH LATENCY & PACKET LOSS METRICS
-==================================================
-[TLS] Key exchange on port 8000
-[UDP] Listening on port 9000
-
-
 3. Run Client(s)
 
 Terminal 2
