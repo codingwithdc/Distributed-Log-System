@@ -15,14 +15,19 @@ UDP_PORT = 9000
 client_id = sys.argv[1] if len(sys.argv) > 1 else socket.gethostname()
 seq = 0
 
+# Backpressure variables
+current_interval = 0.5  # Start with 2 logs per second
+min_interval = 0.05      # Fastest: 20 logs per second
+max_interval = 2.0       # Slowest: 0.5 logs per second
+backpressure_mode = False
+last_backpressure_time = 0
+
 def simple_encrypt(text, key):
     return bytes([ord(c) ^ key for c in text])
 
 def tail_file(filename):
-    """Follow a log file in real-time (like 'tail -f')"""
     try:
         with open(filename, 'r') as f:
-            # Go to end of file
             f.seek(0, os.SEEK_END)
             while True:
                 line = f.readline()
@@ -30,24 +35,17 @@ def tail_file(filename):
                     yield line.strip()
                 else:
                     time.sleep(0.1)
-    except PermissionError:
-        print(f"[WARN] Permission denied: {filename}. Run with sudo for system logs.")
-        yield None
-    except Exception as e:
-        print(f"[WARN] Cannot read {filename}: {e}")
+    except:
         yield None
 
 def get_log_level(line):
-    """Determine log level from real log content"""
     line_lower = line.lower()
     if any(word in line_lower for word in ['error', 'fail', 'critical', 'panic', 'denied', 'refused']):
         return 'ERROR'
     elif any(word in line_lower for word in ['warn', 'warning']):
         return 'WARN'
-    elif any(word in line_lower for word in ['info', 'start', 'stop', 'connected', 'authenticated']):
-        return 'INFO'
     else:
-        return 'DEBUG'
+        return 'INFO'
 
 # Get encryption key via TLS
 print(f"[{client_id}] Connecting to secure key server...")
@@ -67,7 +65,9 @@ secure.close()
 print(f"[{client_id}] Encryption key: {key}")
 print(f"[{client_id}] OS: {platform.system()} {platform.release()}")
 
+# Create UDP socket for sending logs AND receiving backpressure
 udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+udp.setblocking(False)  # Non-blocking to check for backpressure messages
 
 def send_log(level, message):
     global seq
@@ -78,22 +78,62 @@ def send_log(level, message):
     packet = bytes([len(client_id)]) + client_id.encode() + encrypted
     udp.sendto(packet, (SERVER, UDP_PORT))
     
-    # Print to console (truncated for readability)
-    short_msg = message[:100] + "..." if len(message) > 100 else message
-    print(f"[{client_id}] [{seq}] {level}: {short_msg}")
+    short_msg = message[:80] + "..." if len(message) > 80 else message
+    status = "BACKPRESSURE" if backpressure_mode else "NORMAL"
+    print(f"[{client_id}] [{seq}] {status}: {level}: {short_msg}")
 
-# REAL SYSTEM LOG SOURCES 
+def listen_for_backpressure():
+    """Listen for backpressure signals from server"""
+    global current_interval, backpressure_mode, last_backpressure_time
+    
+    while True:
+        try:
+            data, _ = udp.recvfrom(1024)
+            message = data.decode()
+            
+            if message.startswith("BACKPRESSURE:"):
+                last_backpressure_time = time.time()
+                backpressure_mode = True
+                
+                if "SLOW_DOWN" in message:
+                    # Increase interval (slow down)
+                    current_interval = min(current_interval + 0.2, max_interval)
+                    print(f"\n[BACKPRESSURE] Server says SLOW DOWN! New interval: {current_interval:.2f}s")
+                    
+                elif "REDUCE_RATE" in message:
+                    # Moderate slowdown
+                    current_interval = min(current_interval + 0.1, max_interval)
+                    print(f"\n[BACKPRESSURE] Server busy. New interval: {current_interval:.2f}s")
+                    
+                elif "WAIT" in message:
+                    # Temporary pause
+                    print(f"\n[BACKPRESSURE] Server requests wait")
+                    
+        except socket.error:
+            # No message available
+            pass
+        
+        # Gradually recover from backpressure (speed up)
+        if backpressure_mode and (time.time() - last_backpressure_time) > 5:
+            current_interval = max(current_interval - 0.05, min_interval)
+            if current_interval <= min_interval:
+                backpressure_mode = False
+                print(f"\n[BACKPRESSURE] Recovery complete. Normal speed resumed.")
+        
+        time.sleep(0.1)
 
+# Start backpressure listener thread
+backpressure_thread = threading.Thread(target=listen_for_backpressure, daemon=True)
+backpressure_thread.start()
+
+# REAL SYSTEM LOG SOURCES
 log_sources = []
 
-# 1. SYSTEM LOGS (macOS - using log command)
 if platform.system() == 'Darwin':
     print(f"[{client_id}] Monitoring REAL macOS system logs...")
     
     def macos_system_logs():
-        """Real-time macOS system logs using log stream"""
         try:
-            # Use log stream for real-time system logs
             process = subprocess.Popen(
                 ['log', 'stream', '--style', 'syslog', '--level', 'info'],
                 stdout=subprocess.PIPE,
@@ -101,40 +141,15 @@ if platform.system() == 'Darwin':
                 text=True,
                 bufsize=1
             )
-            
             for line in process.stdout:
                 if line.strip():
                     level = get_log_level(line)
                     send_log(level, f"SYSTEM: {line.strip()}")
-                    
         except Exception as e:
             print(f"[ERROR] System log stream failed: {e}")
     
     log_sources.append(('macOS System Logs', macos_system_logs))
-
-# 2. SYSTEM LOGS (Linux)
-else:
-    log_files = []
-    # Common Linux system log locations
-    for log_file in ['/var/log/syslog', '/var/log/auth.log', '/var/log/kern.log', '/var/log/dmesg']:
-        if os.path.exists(log_file):
-            log_files.append(log_file)
-            print(f"[{client_id}] Monitoring REAL Linux log: {log_file}")
-            
-            def create_log_monitor(filename):
-                def monitor():
-                    for line in tail_file(filename):
-                        if line:
-                            level = get_log_level(line)
-                            send_log(level, f"{os.path.basename(filename)}: {line}")
-                return monitor
-            
-            for log_file in log_files:
-                log_sources.append((log_file, create_log_monitor(log_file)))
-
-# 3. AUTHENTICATION LOGS (SSH, sudo, login)
-if platform.system() == 'Darwin':
-    # macOS: Use log stream for auth events
+    
     def macos_auth_logs():
         try:
             process = subprocess.Popen(
@@ -150,19 +165,8 @@ if platform.system() == 'Darwin':
         except:
             pass
     log_sources.append(('macOS Auth Logs', macos_auth_logs))
-else:
-    # Linux: /var/log/auth.log
-    if os.path.exists('/var/log/auth.log'):
-        def linux_auth_logs():
-            for line in tail_file('/var/log/auth.log'):
-                if line:
-                    send_log('AUTH', f"AUTH: {line}")
-        log_sources.append(('Linux Auth Logs', linux_auth_logs))
-
-# 4. NETWORK CONNECTION LOGS
-if platform.system() == 'Darwin':
+    
     def macos_network_logs():
-        """Monitor network connection events"""
         try:
             process = subprocess.Popen(
                 ['log', 'stream', '--predicate', 'process == "kernel" AND (eventMessage contains "WiFi" OR eventMessage contains "en0")'],
@@ -178,28 +182,7 @@ if platform.system() == 'Darwin':
             pass
     log_sources.append(('macOS Network Logs', macos_network_logs))
 
-# 5. SECURITY/CRASH LOGS
-if platform.system() == 'Darwin':
-    def macos_crash_logs():
-        """Monitor crash reports"""
-        try:
-            process = subprocess.Popen(
-                ['log', 'stream', '--predicate', 'eventMessage contains "crash" OR eventMessage contains "panic"'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1
-            )
-            for line in process.stdout:
-                if line.strip():
-                    send_log('CRASH', f"CRASH: {line.strip()}")
-        except:
-            pass
-    log_sources.append(('macOS Crash Logs', macos_crash_logs))
-
-# 6. PROCESS MONITORING
 def monitor_process_events():
-    """Monitor real process creation/termination"""
     if platform.system() == 'Darwin':
         try:
             process = subprocess.Popen(
@@ -214,53 +197,25 @@ def monitor_process_events():
                     send_log('PROCESS', f"PROCESS: {line.strip()}")
         except:
             pass
-    else:
-        # Linux: Use auditd or ps monitoring
-        try:
-            previous_processes = set()
-            while True:
-                result = subprocess.run(['ps', '-eo', 'pid,comm'], capture_output=True, text=True)
-                current_processes = set(result.stdout.strip().split('\n')[1:])
-                
-                # New processes
-                new_processes = current_processes - previous_processes
-                for proc in new_processes:
-                    if proc.strip():
-                        send_log('PROCESS', f"NEW PROCESS: {proc.strip()}")
-                
-                # Terminated processes  
-                terminated = previous_processes - current_processes
-                for proc in terminated:
-                    if proc.strip():
-                        send_log('PROCESS', f"TERMINATED: {proc.strip()}")
-                
-                previous_processes = current_processes
-                time.sleep(5)
-        except:
-            pass
-
-# START ALL LOG MONITORS
 
 print(f"\n[{client_id}] ========================================")
 print(f"[{client_id}] STARTING SYSTEM LOG AGGREGATOR")
+print(f"[{client_id}] WITH BACKPRESSURE HANDLING")
 print(f"[{client_id}] ========================================")
 
-# Start each log source in its own thread
 for name, source_func in log_sources:
     thread = threading.Thread(target=source_func, daemon=True)
     thread.start()
     print(f"[{client_id}] Started: {name}")
 
-# Start process monitor
 process_thread = threading.Thread(target=monitor_process_events, daemon=True)
 process_thread.start()
 print(f"[{client_id}] Started: Process Monitor")
 
-print(f"\n[{client_id}] ALL LOGGERS ACTIVE ")
-print(f"[{client_id}] Waiting for system events...")
-print(f"[{client_id}] Press Ctrl+C to stop\n")
+print(f"\n[{client_id}] Current send interval: {current_interval:.2f}s")
+print(f"[{client_id}] Backpressure listening active")
+print(f"[{client_id}] Waiting for system events...\n")
 
-# Keep main thread alive
 try:
     while True:
         time.sleep(1)
