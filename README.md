@@ -17,6 +17,7 @@ This project implements a secure and scalable log aggregation system where multi
 - **Latency measurement** (average, min, max) for each log
 - **Multithreaded log processing** (4 worker threads)
 - **Performance monitoring** (throughput, latency, packet loss, active clients)
+- **Backpressure handling** 
 
 ---
 
